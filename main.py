@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
@@ -7,7 +8,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-from battery_models import BatterySpec, PRESET_BATTERIES
+from battery_models import BatterySpec, load_all_batteries, save_custom_batteries
 from data_services import (
     DEFAULT_ENTSOE_ZONE,
     DEFAULT_FRANK_OPSLAG,
@@ -19,6 +20,8 @@ from data_services import (
     align_prices_to_energy,
 )
 from simulation_service import simulate_battery, calculate_financials
+
+API_TOKEN_FILE = Path(__file__).resolve().with_name("api.txt")
 
 
 class BatterySimulatorApp:
@@ -32,7 +35,7 @@ class BatterySimulatorApp:
         self.simulations: Dict[str, pd.DataFrame] = {}
         self.metrics_per_battery: Dict[str, Dict[str, float]] = {}
         self.financials_per_battery: Dict[str, Dict[str, float]] = {}
-        self.all_batteries: List[BatterySpec] = [BatterySpec(**vars(b)) for b in PRESET_BATTERIES]
+        self.all_batteries: List[BatterySpec] = load_all_batteries()
         self.summary_df: Optional[pd.DataFrame] = None
 
         self.import_price_var = tk.DoubleVar(value=DEFAULT_PRICE_IMPORT)
@@ -40,10 +43,31 @@ class BatterySimulatorApp:
         self.initial_soc_var = tk.DoubleVar(value=0.0)
         self.frank_opslag_var = tk.DoubleVar(value=DEFAULT_FRANK_OPSLAG)
         self.price_mode_var = tk.StringVar(value="fixed")
-        self.entsoe_token_var = tk.StringVar(value="")
+        self.entsoe_token_var = tk.StringVar(value=self._load_saved_entsoe_token())
         self.entsoe_zone_var = tk.StringVar(value=DEFAULT_ENTSOE_ZONE)
 
         self._build_ui()
+        self.entsoe_token_var.trace_add("write", self._persist_entsoe_token)
+
+    def _load_saved_entsoe_token(self) -> str:
+        if not API_TOKEN_FILE.exists():
+            return ""
+        try:
+            return API_TOKEN_FILE.read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+
+    def _persist_entsoe_token(self, *_):
+        try:
+            API_TOKEN_FILE.write_text(self.entsoe_token_var.get().strip(), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _save_custom_batteries(self):
+        try:
+            save_custom_batteries(self.all_batteries)
+        except Exception as exc:
+            messagebox.showwarning("Opslaan mislukt", f"Batterijen konden niet blijvend worden opgeslagen:\n{exc}")
 
     def _build_ui(self):
         top = ttk.Frame(self.root, padding=10)
@@ -162,6 +186,7 @@ class BatterySimulatorApp:
             else:
                 self.all_batteries[edit_index] = battery
             self.refresh_battery_list()
+            self._save_custom_batteries()
             win.destroy()
 
         ttk.Button(win, text="Opslaan", command=save_battery).grid(row=len(fields), column=0, columnspan=2, pady=10)
@@ -186,6 +211,7 @@ class BatterySimulatorApp:
         if messagebox.askyesno("Bevestigen", f"Batterij '{name}' verwijderen?"):
             del self.all_batteries[index]
             self.refresh_battery_list()
+            self._save_custom_batteries()
 
     def load_csv(self):
         path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])

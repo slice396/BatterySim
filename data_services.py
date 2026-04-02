@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -13,7 +13,7 @@ DEFAULT_PRICE_EXPORT = 0.08
 DEFAULT_FRANK_OPSLAG = 0.02
 DEFAULT_ENTSOE_ZONE = "10YNL----------L"
 INTERVAL_HOURS = 0.25
-ENTSOE_API_URL = "https://web-api.tp.entsoe.eu/api"
+ENTSOE_API_URLS = ["https://web-api.tp.entsoe.eu/api", "https://transparency.entsoe.eu/api"]
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -177,19 +177,39 @@ def fetch_entsoe_day_ahead_prices(zone_eic: str, start_dt: datetime, end_dt: dat
         "periodStart": start_dt.strftime("%Y%m%d%H%M"),
         "periodEnd": end_dt.strftime("%Y%m%d%H%M"),
     }
-    url = f"{ENTSOE_API_URL}?{urlencode(params)}"
-    try:
-        with urlopen(url, timeout=60) as response:
-            xml_data = response.read()
-    except HTTPError as exc:
-        body = ""
-        try:
-            body = exc.read().decode("utf-8", errors="ignore")
-        except Exception:
-            pass
-        raise ValueError(f"ENTSO-E API fout: HTTP {exc.code}\n{body}") from exc
-    except URLError as exc:
-        raise ValueError(f"ENTSO-E API niet bereikbaar: {exc}") from exc
+    xml_data = b""
+    last_error = "Onbekende fout"
+
+    for base_url in ENTSOE_API_URLS:
+        url = f"{base_url}?{urlencode(params)}"
+        for attempt in range(3):
+            try:
+                request = Request(url, headers={"User-Agent": "BatterySim/1.0", "Accept": "application/xml,text/xml,*/*"})
+                with urlopen(request, timeout=60) as response:
+                    xml_data = response.read()
+                break
+            except HTTPError as exc:
+                body = ""
+                try:
+                    body = exc.read().decode("utf-8", errors="ignore")
+                except Exception:
+                    pass
+                if exc.code in {503, 504} and attempt < 2:
+                    continue
+                last_error = f"HTTP {exc.code}: {body[:500]}"
+                break
+            except URLError as exc:
+                last_error = f"Niet bereikbaar: {exc}"
+                break
+        if xml_data:
+            break
+
+    if not xml_data:
+        raise ValueError(
+            "ENTSO-E API fout. De server was niet beschikbaar of gaf een ongeldige reactie. "
+            f"Laatste melding: {last_error}"
+        )
+
     ns = {"ns": "urn:iec62325.351:tc57wg16:451-3:publicationdocument:7:3"}
     root = ET.fromstring(xml_data)
     rows = []
