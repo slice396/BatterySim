@@ -1,0 +1,2 @@
+# BatterySim
+Simpele batterijsimulator. 
