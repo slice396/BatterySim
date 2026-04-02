@@ -13,7 +13,7 @@ DEFAULT_PRICE_EXPORT = 0.08
 DEFAULT_FRANK_OPSLAG = 0.02
 DEFAULT_ENTSOE_ZONE = "10YNL----------L"
 INTERVAL_HOURS = 0.25
-ENTSOE_API_URLS = ["https://web-api.tp.entsoe.eu/api"]
+ENTSOE_API_URLS = ["https://web-api.tp.entsoe.eu/api", "https://web-api.tp.entsoe.eu/api/"]
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
