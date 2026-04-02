@@ -13,7 +13,7 @@ DEFAULT_PRICE_EXPORT = 0.08
 DEFAULT_FRANK_OPSLAG = 0.02
 DEFAULT_ENTSOE_ZONE = "10YNL----------L"
 INTERVAL_HOURS = 0.25
-ENTSOE_API_URLS = ["https://web-api.tp.entsoe.eu/api", "https://transparency.entsoe.eu/api"]
+ENTSOE_API_URLS = ["https://web-api.tp.entsoe.eu/api"]
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -196,7 +196,15 @@ def fetch_entsoe_day_ahead_prices(zone_eic: str, start_dt: datetime, end_dt: dat
                     pass
                 if exc.code in {503, 504} and attempt < 2:
                     continue
-                last_error = f"HTTP {exc.code}: {body[:500]}"
+                if exc.code == 404 and "<html" in body.lower():
+                    last_error = (
+                        "HTTP 404 op ENTSO-E endpoint. Controleer of de API-URL klopt "
+                        "en gebruik alleen https://web-api.tp.entsoe.eu/api."
+                    )
+                elif exc.code == 401:
+                    last_error = "HTTP 401: Ongeldige of ontbrekende ENTSO-E securityToken."
+                else:
+                    last_error = f"HTTP {exc.code}: {body[:500]}"
                 break
             except URLError as exc:
                 last_error = f"Niet bereikbaar: {exc}"
