@@ -198,12 +198,10 @@ def fetch_entsoe_day_ahead_prices(zone_eic: str, start_dt: datetime, end_dt: dat
                     continue
                 if exc.code == 404 and "<html" in body.lower():
                     last_error = (
-                        "HTTP 404 op ENTSO-E endpoint. Probeer zowel /api als /api/; "
-                        "de server geeft nu geen geldige API-response terug."
+                        "HTTP 404 op ENTSO-E endpoint. Controleer of de API-URL klopt "
+                        "en gebruik alleen https://web-api.tp.entsoe.eu/api."
                     )
-                    # probeer volgende endpointvariant (met/zonder trailing slash)
-                    break
-                if exc.code == 401:
+                elif exc.code == 401:
                     last_error = "HTTP 401: Ongeldige of ontbrekende ENTSO-E securityToken."
                 else:
                     last_error = f"HTTP {exc.code}: {body[:500]}"
