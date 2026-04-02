@@ -13,11 +13,7 @@ DEFAULT_PRICE_EXPORT = 0.08
 DEFAULT_FRANK_OPSLAG = 0.02
 DEFAULT_ENTSOE_ZONE = "10YNL----------L"
 INTERVAL_HOURS = 0.25
-ENTSOE_API_URLS = [
-    "https://web-api.tp.entsoe.eu/api",
-    "https://web-api.tp.entsoe.eu/api/",
-    "https://web-api.tp-iop.entsoe.eu/api",
-]
+ENTSOE_API_URL = "https://web-api.tp.entsoe.eu/api"
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -186,47 +182,47 @@ def fetch_entsoe_day_ahead_prices(zone_eic: str, start_dt: datetime, end_dt: dat
     xml_data = b""
     last_error = "Onbekende fout"
 
-    for base_url in ENTSOE_API_URLS:
-        for domains in domain_variants:
-            params = {**common_params, **domains}
-            url = f"{base_url}?{urlencode(params)}"
-            for attempt in range(3):
+    for domains in domain_variants:
+        params = {**common_params, **domains}
+        url = f"{ENTSOE_API_URL}?{urlencode(params)}"
+        for attempt in range(3):
+            try:
+                request = Request(url, headers={"User-Agent": "BatterySim/1.0", "Accept": "application/xml,text/xml,*/*"})
+                with urlopen(request, timeout=30) as response:
+                    xml_data = response.read()
+                break
+            except HTTPError as exc:
+                body = ""
                 try:
-                    request = Request(url, headers={"User-Agent": "BatterySim/1.0", "Accept": "application/xml,text/xml,*/*"})
-                    with urlopen(request, timeout=60) as response:
-                        xml_data = response.read()
-                    break
-                except HTTPError as exc:
-                    body = ""
-                    try:
-                        body = exc.read().decode("utf-8", errors="ignore")
-                    except Exception:
-                        pass
-                    if exc.code in {503, 504} and attempt < 2:
-                        continue
-                    if exc.code == 404 and "<html" in body.lower():
-                        last_error = (
-                            "HTTP 404 op ENTSO-E endpoint. Zowel productie- als IOP-endpoint geprobeerd "
-                            "met meerdere parameter-varianten."
-                        )
-                        break
-                    if exc.code == 401:
-                        last_error = "HTTP 401: Ongeldige of ontbrekende ENTSO-E securityToken."
-                    else:
-                        last_error = f"HTTP {exc.code}: {body[:500]}"
-                    break
-                except URLError as exc:
-                    last_error = f"Niet bereikbaar: {exc}"
-                    break
-            if xml_data:
+                    body = exc.read().decode("utf-8", errors="ignore")
+                except Exception:
+                    pass
+                if exc.code in {503, 504} and attempt < 2:
+                    continue
+                if exc.code == 401:
+                    raise ValueError(
+                        "ENTSO-E API fout (HTTP 401). Je securityToken is ongeldig, ontbreekt of heeft geen toegang. "
+                        "Controleer je token op https://transparency.entsoe.eu/myAccount/webApiAccess en plak exact de token zonder extra spaties. "
+                        f"Endpoint: {ENTSOE_API_URL}"
+                    )
+                if exc.code == 403:
+                    raise ValueError(
+                        "ENTSO-E API fout (HTTP 403). Toegang geweigerd voor deze token of endpoint. "
+                        "Controleer of je token actief is en toegang heeft tot de Web API. "
+                        f"Endpoint: {ENTSOE_API_URL}"
+                    )
+                last_error = f"HTTP {exc.code}: {body[:500]}"
+                break
+            except URLError as exc:
+                last_error = f"Niet bereikbaar: {exc}"
                 break
         if xml_data:
             break
 
     if not xml_data:
         raise ValueError(
-            "ENTSO-E API fout. De server was niet beschikbaar of gaf een ongeldige reactie. "
-            f"Laatste melding: {last_error}"
+            "ENTSO-E API fout. Geen geldige XML-response ontvangen van de server. "
+            f"Endpoint: {ENTSOE_API_URL}. Laatste melding: {last_error}"
         )
 
     ns = {"ns": "urn:iec62325.351:tc57wg16:451-3:publicationdocument:7:3"}
