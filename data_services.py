@@ -360,14 +360,15 @@ def align_prices_to_energy(energy_df: pd.DataFrame, price_df: Optional[pd.DataFr
         raise ValueError("Voor deze prijsmode is prijsdata nodig, maar die is nog niet geladen.")
     energy = energy_df.sort_values("timestamp").copy()
     prices = price_df.sort_values("timestamp").copy()
-    if mode == "entsoe_api":
-        seconds = prices["timestamp"].diff().dropna().dt.total_seconds()
-        if not seconds.empty and seconds.median() >= 3599:
+    seconds = prices["timestamp"].diff().dropna().dt.total_seconds()
+    if not seconds.empty:
+        median_step_minutes = max(1, int(round(seconds.median() / 60)))
+        if median_step_minutes > 15:
             expanded_rows = []
             for _, row in prices.iterrows():
-                for minutes in (0, 15, 30, 45):
+                for offset_minutes in range(0, median_step_minutes, 15):
                     expanded_rows.append({
-                        "timestamp": row["timestamp"] + pd.Timedelta(minutes=minutes),
+                        "timestamp": row["timestamp"] + pd.Timedelta(minutes=offset_minutes),
                         "import_price_eur_per_kwh": row["import_price_eur_per_kwh"],
                         "export_price_eur_per_kwh": row["export_price_eur_per_kwh"],
                     })

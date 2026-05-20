@@ -101,8 +101,22 @@ class BatterySimulatorApp:
 
         battery_frame = ttk.LabelFrame(self.root, text="Batterijen", padding=10)
         battery_frame.pack(fill="x", padx=10, pady=5)
-        self.battery_listbox = tk.Listbox(battery_frame, selectmode=tk.MULTIPLE, height=7, exportselection=False)
-        self.battery_listbox.pack(side="left", fill="x", expand=True)
+        self.battery_tree = ttk.Treeview(
+            battery_frame,
+            columns=("name", "capacity", "charge", "discharge"),
+            show="headings",
+            selectmode="extended",
+            height=7,
+        )
+        self.battery_tree.heading("name", text="Batterij")
+        self.battery_tree.heading("capacity", text="Capaciteit (kWh)")
+        self.battery_tree.heading("charge", text="Laadvermogen (kW)")
+        self.battery_tree.heading("discharge", text="Ontlaadvermogen (kW)")
+        self.battery_tree.column("name", width=360, anchor="w")
+        self.battery_tree.column("capacity", width=140, anchor="center")
+        self.battery_tree.column("charge", width=140, anchor="center")
+        self.battery_tree.column("discharge", width=160, anchor="center")
+        self.battery_tree.pack(side="left", fill="x", expand=True)
         self.refresh_battery_list()
         button_col = ttk.Frame(battery_frame)
         button_col.pack(side="left", padx=10)
@@ -143,17 +157,18 @@ class BatterySimulatorApp:
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def refresh_battery_list(self):
-        current_selection = set(self.battery_listbox.curselection())
-        self.battery_listbox.delete(0, tk.END)
-        for battery in self.all_batteries:
-            self.battery_listbox.insert(tk.END, battery.name)
+        current_selection = set(self.battery_tree.selection())
+        for item in self.battery_tree.get_children():
+            self.battery_tree.delete(item)
+        for i, battery in enumerate(self.all_batteries):
+            iid = str(i)
+            self.battery_tree.insert("", "end", iid=iid, values=(battery.name, round(battery.usable_kwh, 2), round(battery.max_charge_kw, 2), round(battery.max_discharge_kw, 2)))
         if current_selection:
-            for i in current_selection:
-                if i < len(self.all_batteries):
-                    self.battery_listbox.selection_set(i)
+            kept_selection = [iid for iid in current_selection if iid in self.battery_tree.get_children()]
+            if kept_selection:
+                self.battery_tree.selection_set(kept_selection)
         else:
-            for i in range(len(self.all_batteries)):
-                self.battery_listbox.selection_set(i)
+            self.battery_tree.selection_set(self.battery_tree.get_children())
 
     def _open_battery_window(self, edit_index: Optional[int]):
         win = tk.Toplevel(self.root)
@@ -195,18 +210,18 @@ class BatterySimulatorApp:
         self._open_battery_window(None)
 
     def open_edit_battery_window(self):
-        selected = self.battery_listbox.curselection()
+        selected = self.battery_tree.selection()
         if len(selected) != 1:
             messagebox.showwarning("Let op", "Selecteer precies 1 batterij om te wijzigen.")
             return
-        self._open_battery_window(selected[0])
+        self._open_battery_window(int(selected[0]))
 
     def delete_selected_battery(self):
-        selected = list(self.battery_listbox.curselection())
+        selected = list(self.battery_tree.selection())
         if len(selected) != 1:
             messagebox.showwarning("Let op", "Selecteer precies 1 batterij om te verwijderen.")
             return
-        index = selected[0]
+        index = int(selected[0])
         name = self.all_batteries[index].name
         if messagebox.askyesno("Bevestigen", f"Batterij '{name}' verwijderen?"):
             del self.all_batteries[index]
@@ -258,7 +273,7 @@ class BatterySimulatorApp:
         if self.df is None:
             messagebox.showwarning("Let op", "Laad eerst een CSV.")
             return
-        selected_indices = self.battery_listbox.curselection()
+        selected_indices = [int(iid) for iid in self.battery_tree.selection()]
         if not selected_indices:
             messagebox.showwarning("Let op", "Selecteer minimaal 1 batterij.")
             return
@@ -304,6 +319,7 @@ class BatterySimulatorApp:
                 "Ontlaadvermogen (kW)": round(battery.max_discharge_kw, 2),
                 "Lading gebruikt (kWh)": round(metrics["battery_charge_kwh"], 1),
                 "Ontlading gebruikt (kWh)": round(metrics["battery_discharge_kwh"], 1),
+                "Cycli": round(metrics["battery_cycles"], 2),
                 "Netafname met batterij (kWh)": round(metrics["grid_import_with_battery_kwh"], 1),
                 "Teruglevering met batterij (kWh)": round(metrics["grid_export_with_battery_kwh"], 1),
                 "Kosten zonder batterij (€)": round(financials["cost_without_battery_eur"], 2),
@@ -363,6 +379,7 @@ class BatterySimulatorApp:
         self.metrics_text.insert(tk.END, f"Netafname met batterij: {metrics['grid_import_with_battery_kwh']:.1f} kWh\n")
         self.metrics_text.insert(tk.END, f"Teruglevering zonder batterij: {metrics['grid_export_without_battery_kwh']:.1f} kWh\n")
         self.metrics_text.insert(tk.END, f"Teruglevering met batterij: {metrics['grid_export_with_battery_kwh']:.1f} kWh\n")
+        self.metrics_text.insert(tk.END, f"Behaalde cycli: {metrics['battery_cycles']:.2f}\n")
 
         self.fig.clear()
         ax1 = self.fig.add_subplot(411)
