@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -14,6 +15,7 @@ DEFAULT_FRANK_OPSLAG = 0.02
 DEFAULT_ENTSOE_ZONE = "10YNL----------L"
 INTERVAL_HOURS = 0.25
 ENTSOE_API_URL = "https://web-api.tp.entsoe.eu/api"
+ENTSOE_CACHE_FILE = Path(__file__).resolve().with_name("entsoe_prices_cache.csv")
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -271,6 +273,78 @@ def download_entsoe_prices_for_period(energy_df: pd.DataFrame, zone_eic: str, to
     start_dt = floor_to_day_utc(energy_df["timestamp"].min())
     end_dt = ceil_to_next_day_utc(energy_df["timestamp"].max())
     return fetch_entsoe_day_ahead_prices_chunked(zone_eic, start_dt, end_dt, token)
+
+
+def load_entsoe_price_cache() -> pd.DataFrame:
+    if not ENTSOE_CACHE_FILE.exists():
+        return pd.DataFrame(columns=["zone_eic", "timestamp", "import_price_eur_per_kwh", "export_price_eur_per_kwh"])
+    raw = pd.read_csv(ENTSOE_CACHE_FILE)
+    if raw.empty:
+        return pd.DataFrame(columns=["zone_eic", "timestamp", "import_price_eur_per_kwh", "export_price_eur_per_kwh"])
+    required = {"zone_eic", "timestamp", "import_price_eur_per_kwh", "export_price_eur_per_kwh"}
+    if not required.issubset(set(raw.columns)):
+        return pd.DataFrame(columns=["zone_eic", "timestamp", "import_price_eur_per_kwh", "export_price_eur_per_kwh"])
+    raw["timestamp"] = pd.to_datetime(raw["timestamp"], errors="coerce")
+    raw = raw.dropna(subset=["timestamp"]).copy()
+    raw["zone_eic"] = raw["zone_eic"].astype(str)
+    raw["import_price_eur_per_kwh"] = to_numeric_series(raw["import_price_eur_per_kwh"])
+    raw["export_price_eur_per_kwh"] = to_numeric_series(raw["export_price_eur_per_kwh"])
+    return raw.dropna(subset=["import_price_eur_per_kwh"]).sort_values("timestamp").drop_duplicates(subset=["zone_eic", "timestamp"])
+
+
+def save_entsoe_price_cache(cache_df: pd.DataFrame) -> None:
+    out = cache_df.sort_values(["zone_eic", "timestamp"]).drop_duplicates(subset=["zone_eic", "timestamp"])
+    out.to_csv(ENTSOE_CACHE_FILE, index=False)
+
+
+def _expected_hourly_timestamps(start_dt: datetime, end_dt: datetime) -> pd.DatetimeIndex:
+    if start_dt >= end_dt:
+        return pd.DatetimeIndex([])
+    return pd.date_range(start=start_dt.replace(tzinfo=None), end=(end_dt - timedelta(hours=1)).replace(tzinfo=None), freq="1h")
+
+
+def _missing_hourly_ranges(existing: pd.DataFrame, start_dt: datetime, end_dt: datetime) -> List[Tuple[datetime, datetime]]:
+    expected = _expected_hourly_timestamps(start_dt, end_dt)
+    if expected.empty:
+        return []
+    if existing.empty:
+        return [(start_dt, end_dt)]
+    available = set(existing["timestamp"].dt.floor("1h"))
+    missing = [ts.to_pydatetime() for ts in expected if ts not in available]
+    if not missing:
+        return []
+    ranges = []
+    range_start = missing[0]
+    prev = missing[0]
+    for current in missing[1:]:
+        if current - prev > timedelta(hours=1):
+            ranges.append((range_start.replace(tzinfo=timezone.utc), (prev + timedelta(hours=1)).replace(tzinfo=timezone.utc)))
+            range_start = current
+        prev = current
+    ranges.append((range_start.replace(tzinfo=timezone.utc), (prev + timedelta(hours=1)).replace(tzinfo=timezone.utc)))
+    return ranges
+
+
+def get_or_download_entsoe_prices_for_period(energy_df: pd.DataFrame, zone_eic: str, token: str) -> pd.DataFrame:
+    start_dt = floor_to_day_utc(energy_df["timestamp"].min())
+    end_dt = ceil_to_next_day_utc(energy_df["timestamp"].max())
+    cache = load_entsoe_price_cache()
+    zone_cache = cache[cache["zone_eic"] == zone_eic].copy()
+    missing_ranges = _missing_hourly_ranges(zone_cache, start_dt, end_dt)
+    fetched_frames = []
+    for missing_start, missing_end in missing_ranges:
+        fetched_frames.append(fetch_entsoe_day_ahead_prices_chunked(zone_eic, missing_start, missing_end, token))
+    if fetched_frames:
+        fetched = pd.concat(fetched_frames, ignore_index=True)
+        fetched["zone_eic"] = zone_eic
+        cache = pd.concat([cache, fetched[["zone_eic", "timestamp", "import_price_eur_per_kwh", "export_price_eur_per_kwh"]]], ignore_index=True)
+        save_entsoe_price_cache(cache)
+        zone_cache = cache[cache["zone_eic"] == zone_eic].copy()
+    mask = (zone_cache["timestamp"] >= start_dt.replace(tzinfo=None)) & (zone_cache["timestamp"] < end_dt.replace(tzinfo=None))
+    out = zone_cache.loc[mask, ["timestamp", "import_price_eur_per_kwh", "export_price_eur_per_kwh"]].sort_values("timestamp").drop_duplicates(subset=["timestamp"])
+    if out.empty:
+        raise ValueError("Geen ENTSO-E prijsdata gevonden of opgehaald voor de gekozen periode.")
+    return out.reset_index(drop=True)
 
 
 def align_prices_to_energy(energy_df: pd.DataFrame, price_df: Optional[pd.DataFrame], mode: str, fixed_import: float, fixed_export: float, opslag: float) -> pd.DataFrame:

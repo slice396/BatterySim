@@ -16,7 +16,7 @@ from data_services import (
     DEFAULT_PRICE_IMPORT,
     load_energy_csv,
     load_price_csv,
-    download_entsoe_prices_for_period,
+    get_or_download_entsoe_prices_for_period,
     align_prices_to_energy,
 )
 from simulation_service import simulate_battery, calculate_financials
@@ -247,10 +247,10 @@ class BatterySimulatorApp:
             messagebox.showwarning("Let op", "Vul eerst je ENTSO-E token in.")
             return
         try:
-            self.price_df = download_entsoe_prices_for_period(self.df, self.entsoe_zone_var.get().strip(), token)
+            self.price_df = get_or_download_entsoe_prices_for_period(self.df, self.entsoe_zone_var.get().strip(), token)
             self.price_file_label.config(text=f"ENTSO-E prijzen geladen: {len(self.price_df)} regels")
             self.price_mode_var.set("entsoe_api")
-            messagebox.showinfo("Gelukt", f"ENTSO-E day-ahead prijzen opgehaald: {len(self.price_df)} regels.\nFrank opslag wordt apart op de afnameprijs gezet.")
+            messagebox.showinfo("Gelukt", f"ENTSO-E day-ahead prijzen geladen (cache + aanvulling): {len(self.price_df)} regels.\nFrank opslag wordt apart op de afnameprijs gezet.")
         except Exception as exc:
             messagebox.showerror("ENTSO-E fout", str(exc))
 
@@ -262,6 +262,17 @@ class BatterySimulatorApp:
         if not selected_indices:
             messagebox.showwarning("Let op", "Selecteer minimaal 1 batterij.")
             return
+        if self.price_mode_var.get() == "entsoe_api":
+            token = self.entsoe_token_var.get().strip()
+            if not token:
+                messagebox.showwarning("Let op", "Vul eerst je ENTSO-E token in.")
+                return
+            try:
+                self.price_df = get_or_download_entsoe_prices_for_period(self.df, self.entsoe_zone_var.get().strip(), token)
+                self.price_file_label.config(text=f"ENTSO-E prijzen geladen: {len(self.price_df)} regels")
+            except Exception as exc:
+                messagebox.showerror("ENTSO-E fout", str(exc))
+                return
         try:
             aligned_df = align_prices_to_energy(
                 self.df,
