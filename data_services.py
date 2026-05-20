@@ -352,6 +352,9 @@ def align_prices_to_energy(energy_df: pd.DataFrame, price_df: Optional[pd.DataFr
         out = energy_df.copy()
         out["import_price_eur_per_kwh"] = fixed_import + opslag
         out["export_price_eur_per_kwh"] = fixed_export
+        out["matched_price_timestamp"] = out["timestamp"]
+        out["dynamic_price_matched"] = True
+        out["dynamic_price_gap_minutes"] = 0.0
         out.attrs["price_mode"] = "fixed"
         out.attrs["frank_opslag"] = opslag
         out.attrs["price_overlap_ratio"] = 1.0
@@ -371,12 +374,17 @@ def align_prices_to_energy(energy_df: pd.DataFrame, price_df: Optional[pd.DataFr
                         "timestamp": row["timestamp"] + pd.Timedelta(minutes=offset_minutes),
                         "import_price_eur_per_kwh": row["import_price_eur_per_kwh"],
                         "export_price_eur_per_kwh": row["export_price_eur_per_kwh"],
+                        "matched_price_timestamp": row["matched_price_timestamp"],
                     })
             prices = pd.DataFrame(expanded_rows).sort_values("timestamp").drop_duplicates(subset=["timestamp"])
     tolerance = pd.Timedelta("1h") if mode == "dynamic_csv" else pd.Timedelta("20m")
     aligned = pd.merge_asof(energy, prices, on="timestamp", direction="backward", tolerance=tolerance)
     overlap_mask = aligned["import_price_eur_per_kwh"].notna()
     overlap = overlap_mask.mean() if len(aligned) else 0.0
+    aligned["dynamic_price_matched"] = overlap_mask
+    aligned["dynamic_price_gap_minutes"] = (
+        (aligned["timestamp"] - aligned["matched_price_timestamp"]).dt.total_seconds() / 60.0
+    )
     aligned["import_price_eur_per_kwh"] = aligned["import_price_eur_per_kwh"].fillna(fixed_import) + opslag
     aligned["export_price_eur_per_kwh"] = aligned["export_price_eur_per_kwh"].fillna(fixed_export)
     aligned.attrs["price_mode"] = mode

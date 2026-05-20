@@ -22,6 +22,7 @@ from data_services import (
 from simulation_service import simulate_battery, calculate_financials
 
 API_TOKEN_FILE = Path(__file__).resolve().with_name("api.txt")
+DEBUG_LOG_FILE = Path(__file__).resolve().with_name("debug.log")
 
 
 class BatterySimulatorApp:
@@ -314,9 +315,6 @@ class BatterySimulatorApp:
             self.financials_per_battery[battery.name] = financials
             summary_rows.append({
                 "Batterij": battery.name,
-                "Capaciteit (kWh)": round(battery.usable_kwh, 2),
-                "Laadvermogen (kW)": round(battery.max_charge_kw, 2),
-                "Ontlaadvermogen (kW)": round(battery.max_discharge_kw, 2),
                 "Lading gebruikt (kWh)": round(metrics["battery_charge_kwh"], 1),
                 "Ontlading gebruikt (kWh)": round(metrics["battery_discharge_kwh"], 1),
                 "Cycli": round(metrics["battery_cycles"], 2),
@@ -331,11 +329,71 @@ class BatterySimulatorApp:
         self.summary_df = pd.DataFrame(summary_rows).sort_values("Theoretische besparing (€)", ascending=False)
         self.populate_summary_tree()
         self.populate_overall_text(aligned_df)
+        self.write_debug_log(aligned_df)
         names = list(self.simulations.keys())
         self.detail_combo["values"] = names
         if names:
             self.detail_var.set(names[0])
             self.draw_selected_battery()
+
+    def write_debug_log(self, aligned_df: pd.DataFrame):
+        lines = []
+        now = pd.Timestamp.utcnow()
+        lines.append(f"=== BatterySim debug ===")
+        lines.append(f"Generated at (UTC): {now}")
+        lines.append(f"Price mode: {aligned_df.attrs.get('price_mode', 'fixed')}")
+        lines.append(f"Frank opslag (EUR/kWh): {aligned_df.attrs.get('frank_opslag', 0)}")
+        lines.append(f"Rows in energy/simulation frame: {len(aligned_df)}")
+        overlap_pct = aligned_df.attrs.get("price_overlap_ratio", 1.0) * 100.0
+        lines.append(f"Dynamic price overlap (%): {overlap_pct:.2f}")
+        if "dynamic_price_matched" in aligned_df.columns:
+            matched = int(aligned_df["dynamic_price_matched"].fillna(False).sum())
+            unmatched = int((~aligned_df["dynamic_price_matched"].fillna(False)).sum())
+            lines.append(f"Matched rows: {matched}")
+            lines.append(f"Unmatched rows: {unmatched}")
+            if unmatched > 0:
+                unmatched_df = aligned_df.loc[~aligned_df["dynamic_price_matched"].fillna(False), ["timestamp"]].copy()
+                lines.append("Unmatched timestamps (first 200):")
+                for ts in unmatched_df["timestamp"].head(200):
+                    lines.append(f"- {ts}")
+        if "dynamic_price_gap_minutes" in aligned_df.columns:
+            gap = aligned_df["dynamic_price_gap_minutes"].dropna()
+            if not gap.empty:
+                lines.append(
+                    f"Gap minutes stats (matched rows): min={gap.min():.1f}, median={gap.median():.1f}, max={gap.max():.1f}"
+                )
+        lines.append("")
+        lines.append("=== Per battery metrics ===")
+        for battery_name, metrics in self.metrics_per_battery.items():
+            financials = self.financials_per_battery.get(battery_name, {})
+            lines.append(f"[{battery_name}]")
+            for key in sorted(metrics.keys()):
+                lines.append(f"  {key}: {metrics[key]}")
+            for key in sorted(financials.keys()):
+                lines.append(f"  {key}: {financials[key]}")
+            sim_df = self.simulations.get(battery_name)
+            if sim_df is not None and not sim_df.empty:
+                lines.append("  sample_rows_last_5:")
+                sample_cols = [
+                    "timestamp",
+                    "surplus_kwh",
+                    "deficit_kwh",
+                    "battery_charge_kwh",
+                    "battery_discharge_kwh",
+                    "soc_kwh",
+                    "import_price_eur_per_kwh",
+                    "export_price_eur_per_kwh",
+                    "dynamic_price_matched",
+                    "matched_price_timestamp",
+                    "dynamic_price_gap_minutes",
+                ]
+                sample_cols = [c for c in sample_cols if c in sim_df.columns]
+                for _, row in sim_df[sample_cols].tail(5).iterrows():
+                    lines.append(f"    {row.to_dict()}")
+        try:
+            DEBUG_LOG_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except Exception:
+            pass
 
     def populate_overall_text(self, aligned_df: pd.DataFrame):
         self.overall_text.delete("1.0", tk.END)
@@ -347,6 +405,7 @@ class BatterySimulatorApp:
         if aligned_df.attrs.get("price_mode") in {"dynamic_csv", "entsoe_api"}:
             self.overall_text.insert(tk.END, f"Prijs-overlap met energiedata: {aligned_df.attrs.get('price_overlap_ratio', 1.0) * 100:.1f}%\n")
             self.overall_text.insert(tk.END, "Niet-overlappende regels vallen terug op de vaste handmatige prijzen.\n")
+        self.overall_text.insert(tk.END, f"Debug log: {DEBUG_LOG_FILE}\n")
         if self.df is not None and self.df.attrs.get("data_mode") == "homewizard_p1":
             self.overall_text.insert(tk.END, "HomeWizard P1 bevat netmeterstanden; zelfconsumptie/autarkie blijven indicatief.\n")
 
