@@ -320,6 +320,23 @@ class BatterySimulatorApp:
         if aligned_df.attrs.get("price_mode") in {"dynamic_csv", "entsoe_api"}:
             self.overall_text.insert(tk.END, f"Prijs-overlap met energiedata: {aligned_df.attrs.get('price_overlap_ratio', 1.0) * 100:.1f}%\n")
             self.overall_text.insert(tk.END, "Niet-overlappende regels vallen terug op de vaste handmatige prijzen.\n")
+            self.overall_text.insert(tk.END, "Prijsnormalisatie (uur -> kwartier):\n")
+            self.overall_text.insert(
+                tk.END,
+                f"- Originele prijsregels: {int(aligned_df.attrs.get('price_rows_before_expansion', 0))}\n"
+            )
+            self.overall_text.insert(
+                tk.END,
+                f"- Regels na normalisatie: {int(aligned_df.attrs.get('price_rows_after_expansion', 0))}\n"
+            )
+            self.overall_text.insert(
+                tk.END,
+                f"- Uurregels uitgebreid: {int(aligned_df.attrs.get('expanded_hourly_rows', 0))}\n"
+            )
+            self.overall_text.insert(
+                tk.END,
+                f"- Extra kwartierregels toegevoegd: {int(aligned_df.attrs.get('hourly_expansion_added_rows', 0))}\n"
+            )
         if self.df is not None and self.df.attrs.get("data_mode") == "homewizard_p1":
             self.overall_text.insert(tk.END, "HomeWizard P1 bevat netmeterstanden; zelfconsumptie/autarkie blijven indicatief.\n")
 

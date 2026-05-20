@@ -273,6 +273,52 @@ def download_entsoe_prices_for_period(energy_df: pd.DataFrame, zone_eic: str, to
     return fetch_entsoe_day_ahead_prices_chunked(zone_eic, start_dt, end_dt, token)
 
 
+
+
+def expand_hourly_prices_to_quarters(price_df: pd.DataFrame) -> pd.DataFrame:
+    prices = price_df.sort_values("timestamp").copy()
+    if prices.empty:
+        prices.attrs["expanded_hourly_rows"] = 0
+        prices.attrs["hourly_expansion_added_rows"] = 0
+        prices.attrs["price_rows_before_expansion"] = 0
+        prices.attrs["price_rows_after_expansion"] = 0
+        return prices
+
+    diffs = prices["timestamp"].diff().dropna().dt.total_seconds()
+    typical_step = diffs.mode().iloc[0] if not diffs.empty else 0
+
+    expanded_rows = []
+    expanded_hourly_rows = 0
+    rows = list(prices.itertuples(index=False))
+    for idx, row in enumerate(rows):
+        current_ts = row.timestamp
+        if idx < len(rows) - 1:
+            next_ts = rows[idx + 1].timestamp
+            gap_seconds = (next_ts - current_ts).total_seconds()
+        else:
+            gap_seconds = typical_step
+
+        if gap_seconds >= 50 * 60:
+            expanded_hourly_rows += 1
+            for minutes in (0, 15, 30, 45):
+                expanded_rows.append({
+                    "timestamp": current_ts + pd.Timedelta(minutes=minutes),
+                    "import_price_eur_per_kwh": row.import_price_eur_per_kwh,
+                    "export_price_eur_per_kwh": row.export_price_eur_per_kwh,
+                })
+        else:
+            expanded_rows.append({
+                "timestamp": current_ts,
+                "import_price_eur_per_kwh": row.import_price_eur_per_kwh,
+                "export_price_eur_per_kwh": row.export_price_eur_per_kwh,
+            })
+
+    expanded = pd.DataFrame(expanded_rows).sort_values("timestamp").drop_duplicates(subset=["timestamp"]).reset_index(drop=True)
+    expanded.attrs["expanded_hourly_rows"] = expanded_hourly_rows
+    expanded.attrs["hourly_expansion_added_rows"] = len(expanded) - len(prices)
+    expanded.attrs["price_rows_before_expansion"] = len(prices)
+    expanded.attrs["price_rows_after_expansion"] = len(expanded)
+    return expanded
 def align_prices_to_energy(energy_df: pd.DataFrame, price_df: Optional[pd.DataFrame], mode: str, fixed_import: float, fixed_export: float, opslag: float) -> pd.DataFrame:
     if mode == "fixed":
         out = energy_df.copy()
@@ -286,18 +332,8 @@ def align_prices_to_energy(energy_df: pd.DataFrame, price_df: Optional[pd.DataFr
         raise ValueError("Voor deze prijsmode is prijsdata nodig, maar die is nog niet geladen.")
     energy = energy_df.sort_values("timestamp").copy()
     prices = price_df.sort_values("timestamp").copy()
-    if mode == "entsoe_api":
-        seconds = prices["timestamp"].diff().dropna().dt.total_seconds()
-        if not seconds.empty and seconds.median() >= 3599:
-            expanded_rows = []
-            for _, row in prices.iterrows():
-                for minutes in (0, 15, 30, 45):
-                    expanded_rows.append({
-                        "timestamp": row["timestamp"] + pd.Timedelta(minutes=minutes),
-                        "import_price_eur_per_kwh": row["import_price_eur_per_kwh"],
-                        "export_price_eur_per_kwh": row["export_price_eur_per_kwh"],
-                    })
-            prices = pd.DataFrame(expanded_rows).sort_values("timestamp").drop_duplicates(subset=["timestamp"])
+    if mode in {"dynamic_csv", "entsoe_api"}:
+        prices = expand_hourly_prices_to_quarters(prices)
     tolerance = pd.Timedelta("1h") if mode == "dynamic_csv" else pd.Timedelta("20m")
     aligned = pd.merge_asof(energy, prices, on="timestamp", direction="backward", tolerance=tolerance)
     overlap_mask = aligned["import_price_eur_per_kwh"].notna()
@@ -307,4 +343,8 @@ def align_prices_to_energy(energy_df: pd.DataFrame, price_df: Optional[pd.DataFr
     aligned.attrs["price_mode"] = mode
     aligned.attrs["price_overlap_ratio"] = overlap
     aligned.attrs["frank_opslag"] = opslag
+    aligned.attrs["expanded_hourly_rows"] = prices.attrs.get("expanded_hourly_rows", 0)
+    aligned.attrs["hourly_expansion_added_rows"] = prices.attrs.get("hourly_expansion_added_rows", 0)
+    aligned.attrs["price_rows_before_expansion"] = prices.attrs.get("price_rows_before_expansion", len(prices))
+    aligned.attrs["price_rows_after_expansion"] = prices.attrs.get("price_rows_after_expansion", len(prices))
     return aligned
