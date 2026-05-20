@@ -363,7 +363,6 @@ def align_prices_to_energy(energy_df: pd.DataFrame, price_df: Optional[pd.DataFr
         raise ValueError("Voor deze prijsmode is prijsdata nodig, maar die is nog niet geladen.")
     energy = energy_df.sort_values("timestamp").copy()
     prices = price_df.sort_values("timestamp").copy()
-    prices["matched_price_timestamp"] = prices["timestamp"]
     seconds = prices["timestamp"].diff().dropna().dt.total_seconds()
     if not seconds.empty:
         median_step_minutes = max(1, int(round(seconds.median() / 60)))
