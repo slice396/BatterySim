@@ -64,6 +64,7 @@ def simulate_battery(df: pd.DataFrame, spec: BatterySpec, initial_soc: float) ->
         "direct_self_consumption_kwh": result["direct_self_consumption_kwh"].sum(),
         "self_consumption_with_battery_kwh": result["self_consumption_with_battery_kwh"].sum(),
         "final_soc_kwh": result["soc_kwh"].iloc[-1] if len(result) else 0.0,
+        "battery_cycles": ((result["battery_charge_kwh"].sum() + result["battery_discharge_kwh"].sum()) / (2 * spec.usable_kwh)) if spec.usable_kwh > 0 else 0.0,
     }
     return result, metrics
 
